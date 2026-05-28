@@ -2,6 +2,8 @@
 
 Minimal kit for **developers and end users** who connect **Cursor**, **Claude Desktop**, or other **stdio MCP** clients to a **hosted** MDAS-MCP service (AWS / dev). You do **not** need `server.py`, Docker, or the full `MDAS-MCP` repo.
 
+**Repository:** [github.com/vt-mdas/MDAS-MCP-CLIENT](https://github.com/vt-mdas/MDAS-MCP-CLIENT)
+
 The hosted MCP server (`POST /mcp`) is operated by your platform team. This folder runs only **`mcp_stdio_proxy.py`** on your machine: browser login, token storage, and stdio ↔ HTTP bridging.
 
 ## Contents
