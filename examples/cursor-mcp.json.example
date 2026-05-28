@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "mdas": {
+      "command": "python",
+      "args": [
+        "${workspaceFolder}/MDAS-MCP-Client/mcp_stdio_proxy.py",
+        "--config",
+        "${workspaceFolder}/MDAS-MCP-Client/config.aws.json"
+      ],
+      "cwd": "${workspaceFolder}/MDAS-MCP-Client",
+      "env": {
+        "MDAS_MCP_HTTP_URL": "https://mdas-mcp-dev.viewtrade.dev/mcp/"
+      }
+    }
+  }
+}
