@@ -53,9 +53,21 @@ The exact settings screen depends on your Cursor version; follow your org’s in
 
 ### 3.2 Sign in (first time)
 
-MDAS-MCP does **not** work without signing in. When you connect or use a tool, your MCP client should:
+MDAS-MCP does **not** work without signing in. Use either path:
 
-1. **Open your browser** to the MDAS website login page (with `?source=mcp` so the site knows you came from MCP).
+**A — Same as REST API (access_token)**  
+Call `POST /api/user/login`, then send `Authorization: Bearer {access_token}` on every MCP request (stdio proxy can do this for you):
+
+```powershell
+python mcp_stdio_proxy.py --login-only --username YOUR_USER --password YOUR_PASS
+```
+
+Or set `MDAS_ACCESS_TOKEN` (and optionally `MDAS_REFRESH_TOKEN`) from a login response before starting the proxy.
+
+**B — Browser handoff (Approach A)**  
+When you connect or use a tool, your MCP client may:
+
+1. **Open your browser** to the MDAS website login page (with `?source=mcp`).
 2. **Log in** with your normal MDAS username and password.
 3. Complete any **agreement signing** on the website if prompted.
 4. Finish the short **handoff** step (browser may redirect briefly; your MCP app completes this in the background).

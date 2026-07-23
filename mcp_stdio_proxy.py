@@ -19,7 +19,12 @@ Environment (optional overrides):
   MDAS_HANDOFF_REDIRECT_URI — callback the SPA redirects to after mint (allowlisted on API)
   MDAS_TOKEN_PATH     — file to store `{access_token, refresh_token, user_id}` JSON
                         (default `%USERPROFILE%\\.mdas-mcp\\tokens.json` on Windows, `~/.mdas-mcp/tokens.json` elsewhere)
+  MDAS_ACCESS_TOKEN   — use this Bearer access token (same as POST /api/user/login) instead of browser handoff
+  MDAS_REFRESH_TOKEN  — optional refresh token paired with MDAS_ACCESS_TOKEN
+  MDAS_USER_ID        — optional WebAPI user id (otherwise taken from JWT claims)
+  MDAS_USERNAME / MDAS_PASSWORD — call POST /api/user/login to obtain tokens (same as REST API)
   MDAS_FORCE_HANDOFF  — set `1` to ignore stored tokens and run browser flow again
+  MDAS_FORCE_LOGIN    — set `1` to ignore stored tokens and run API login again (needs username/password)
   MDAS_NO_AUTO_BROWSER_HANDOFF — set ``1`` to disable automatic browser handoff when
     ``server.py`` returns ``mdas_trigger_browser_handoff`` (after failed token refresh).
   MDAS_DISABLE_TOKEN_DISK_RELOAD — set ``1`` to stop reloading ``tokens.json`` when the
@@ -31,6 +36,8 @@ Environment (optional overrides):
 
 Usage::
   MDAS_FORCE_HANDOFF=1 python mcp_stdio_proxy.py
+  python mcp_stdio_proxy.py --login-only --username USER --password PASS
+  MDAS_ACCESS_TOKEN=eyJ... python mcp_stdio_proxy.py
 """
 
 from __future__ import annotations
@@ -610,6 +617,75 @@ def fetch_level1_sample(cfg: AppConfig, access: str, symbol: str = "AAPL") -> di
     return level1_sample_row(items[0])
 
 
+def login_via_api(cfg: AppConfig, username: str, password: str) -> tuple[str, str | None, str | None]:
+    """
+    POST /api/user/login — same contract as REST API clients.
+    Returns (access_token, refresh_token, user_id).
+    """
+    user = (username or "").strip()
+    pwd = password or ""
+    if not user or not pwd:
+        raise RuntimeError("username and password are required for API login")
+
+    url = f"{cfg.mdas.api_base_url.rstrip('/')}/api/user/login"
+    body = {"user_name": user, "password": pwd}
+    try:
+        with httpx.Client(verify=cfg.mdas.verify_tls, timeout=60.0) as client:
+            r = client.post(
+                url,
+                json=body,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"login request failed (network): {exc}") from exc
+
+    try:
+        payload = r.json()
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"login HTTP {r.status_code}: invalid JSON ({r.text[:200]!r})") from exc
+
+    if r.status_code != 200:
+        detail = payload if isinstance(payload, str) else json.dumps(payload)[:300]
+        raise RuntimeError(f"login failed HTTP {r.status_code}: {detail}")
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("login response is not a JSON object")
+
+    access = pick_token(payload, "AccessToken", "access_token")
+    if not access:
+        raise RuntimeError("login response missing access_token")
+
+    refresh = pick_token(payload, "RefreshToken", "refresh_token")
+    user_id: str | None = None
+    user_obj = payload.get("User") or payload.get("user")
+    if isinstance(user_obj, dict):
+        for key in ("Id", "id", "UserId", "user_id"):
+            val = user_obj.get(key)
+            if isinstance(val, str) and val.strip():
+                user_id = val.strip()
+                break
+    if not user_id:
+        user_id = jwt_user_id_fallback(access)
+    return access, refresh, user_id
+
+
+def apply_env_access_token(cfg: AppConfig, store: TokenStore) -> bool:
+    """If MDAS_ACCESS_TOKEN is set, seed the token store (same Bearer as REST API)."""
+    access = (os.environ.get("MDAS_ACCESS_TOKEN") or "").strip()
+    if not access:
+        return False
+    refresh = (os.environ.get("MDAS_REFRESH_TOKEN") or "").strip() or None
+    user_id = (os.environ.get("MDAS_USER_ID") or "").strip() or jwt_user_id_fallback(access)
+    store.assign(access, refresh, user_id)
+    if not probe_access_token(cfg, access):
+        raise RuntimeError(
+            "MDAS_ACCESS_TOKEN was rejected by WebAPI (expired, revoked, or not entitled). "
+            "Obtain a fresh token via POST /api/user/login."
+        )
+    logger.info("Using MDAS_ACCESS_TOKEN from environment → %s", store.path)
+    return True
+
+
 def try_refresh_via_api(cfg: AppConfig, store: TokenStore) -> bool:
     if not store.refresh or not store.user_id:
         return False
@@ -676,6 +752,34 @@ def _try_peer_handoff_tokens(
     return False
 
 
+def _notify_tokens_ready(cfg: AppConfig, access: str, *, source: str) -> None:
+    if not probe_access_token(cfg, access):
+        logger.warning(
+            "Tokens from %s did not pass level1 probe — check agreements / entitlements.",
+            source,
+        )
+        user_notice(
+            "Sign-in saved, but a test quote failed. "
+            "Complete any required agreements on the MDAS website, then try again."
+        )
+        return
+    sample = fetch_level1_sample(cfg, access)
+    if sample and sample.get("bid") is not None:
+        user_notice(
+            "Sign-in complete. Sample quote — "
+            f"{sample['symbol']}: last={sample['last']} bid={sample['bid']} ask={sample['ask']}. "
+            "Use MCP quote tools in Cursor (mdas-local must stay enabled). "
+            "Only toggle mdas-local off/on if the MCP panel shows Not connected."
+        )
+    else:
+        user_notice(
+            "Sign-in complete. You can return to Cursor and request quotes "
+            "(for example: level1 for AAPL). "
+            "Use MCP quote tools in Cursor (mdas-local must stay enabled). "
+            "Only toggle mdas-local off/on if the MCP panel shows Not connected."
+        )
+
+
 def ensure_tokens(
     cfg: AppConfig,
     store: TokenStore,
@@ -684,16 +788,35 @@ def ensure_tokens(
     login_url: str | None,
     force_handoff: bool,
     timeout_s: float,
+    username: str | None = None,
+    password: str | None = None,
+    prefer_api_login: bool = False,
 ) -> None:
-    if not login_url:
-        raise RuntimeError("mdas.website_login_url is missing in config.json — required for Approach A.")
+    """
+    Ensure store has a usable access_token for MCP Bearer calls.
 
-    verify = cfg.mdas.verify_tls
-    force = force_handoff or os.environ.get("MDAS_FORCE_HANDOFF", "").strip() in ("1", "true", "yes")
+    Priority (unless forced):
+      1. MDAS_ACCESS_TOKEN env (same JWT as REST API Authorization: Bearer)
+      2. tokens.json on disk (+ refresh)
+      3. POST /api/user/login with username/password (CLI or MDAS_USERNAME/MDAS_PASSWORD)
+      4. Browser handoff (Approach A) when mdas.website_login_url is set
+    """
+    force_browser = force_handoff or os.environ.get("MDAS_FORCE_HANDOFF", "").strip() in ("1", "true", "yes")
+    force_api_login = prefer_api_login or os.environ.get("MDAS_FORCE_LOGIN", "").strip() in ("1", "true", "yes")
     lock_path = default_handoff_lock_file()
     grace_s = _handoff_grace_seconds()
+    verify = cfg.mdas.verify_tls
 
-    if not force:
+    if not force_browser and not force_api_login:
+        try:
+            if apply_env_access_token(cfg, store):
+                user_notice("Using access_token from environment. MDAS quote tools are ready.")
+                return
+        except RuntimeError:
+            if not (username or os.environ.get("MDAS_USERNAME")):
+                raise
+
+    if not force_browser and not force_api_login:
         store.reload_disk_state()
         if tokens_usable(cfg, store):
             logger.info("Using stored tokens from %s", store.path)
@@ -723,7 +846,37 @@ def ensure_tokens(
             ):
                 return
 
+    user = (username or os.environ.get("MDAS_USERNAME") or "").strip()
+    pwd = password if password is not None else (os.environ.get("MDAS_PASSWORD") or "")
+    if user and pwd and (force_api_login or not force_browser):
+        logger.info("Obtaining tokens via POST /api/user/login (same as REST API)...")
+        user_notice("Signing in via MDAS login API (no browser)...")
+        access, refresh, uid = login_via_api(cfg, user, pwd)
+        store.assign(access, refresh, uid)
+        logger.info("API login OK → tokens saved to %s", store.path)
+        _notify_tokens_ready(cfg, access, source="api login")
+        return
+
+    if force_api_login and not (user and pwd):
+        raise RuntimeError(
+            "API login requested (--login-only / MDAS_FORCE_LOGIN) but username/password missing. "
+            "Pass --username/--password or set MDAS_USERNAME / MDAS_PASSWORD."
+        )
+
+    if not login_url:
+        raise RuntimeError(
+            "No usable access_token. Provide MDAS_ACCESS_TOKEN, or MDAS_USERNAME/MDAS_PASSWORD "
+            "(POST /api/user/login), or set mdas.website_login_url for browser handoff."
+        )
+
+    if not force_browser:
         logger.info("Stored tokens unusable; running browser handoff...")
+        user_notice(
+            "Opening the MDAS website for sign-in. "
+            "Log in, complete any agreements, then wait for the success page."
+        )
+    else:
+        logger.info("MDAS_FORCE_HANDOFF set; running browser handoff...")
         user_notice(
             "Opening the MDAS website for sign-in. "
             "Log in, complete any agreements, then wait for the success page."
@@ -739,30 +892,7 @@ def ensure_tokens(
     )
     store.assign(access, refresh, uid)
     logger.info("Saved tokens to %s", store.path)
-    if not probe_access_token(cfg, access):
-        logger.warning(
-            "New tokens from handoff did not pass level1 probe — check agreements / entitlements on the website."
-        )
-        user_notice(
-            "Sign-in saved, but a test quote failed. "
-            "Complete any required agreements on the MDAS website, then try again."
-        )
-    else:
-        sample = fetch_level1_sample(cfg, access)
-        if sample and sample.get("bid") is not None:
-            user_notice(
-                "Sign-in complete. Sample quote — "
-                f"{sample['symbol']}: last={sample['last']} bid={sample['bid']} ask={sample['ask']}. "
-                "Use MCP quote tools in Cursor (mdas-local must stay enabled). "
-                "Only toggle mdas-local off/on if the MCP panel shows Not connected."
-            )
-        else:
-            user_notice(
-                "Sign-in complete. You can return to Cursor and request quotes "
-                "(for example: level1 for AAPL). "
-                "Use MCP quote tools in Cursor (mdas-local must stay enabled). "
-                "Only toggle mdas-local off/on if the MCP panel shows Not connected."
-            )
+    _notify_tokens_ready(cfg, access, source="browser handoff")
 
 
 def build_http_headers(access: str | None, refresh: str | None, uid: str | None) -> dict[str, str]:
@@ -1257,6 +1387,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Run browser handoff once, save tokens, then exit.",
     )
     ap.add_argument(
+        "--login-only",
+        action="store_true",
+        help="POST /api/user/login (same as REST), save access_token/refresh_token, then exit.",
+    )
+    ap.add_argument(
+        "--username",
+        default="",
+        help="MDAS username for --login-only (or set MDAS_USERNAME).",
+    )
+    ap.add_argument(
+        "--password",
+        default="",
+        help="MDAS password for --login-only (or set MDAS_PASSWORD).",
+    )
+    ap.add_argument(
         "--timeout",
         type=float,
         default=300.0,
@@ -1293,6 +1438,22 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("--smoke: checking local MCP HTTP + WebAPI handoff/exchange...")
         smoke_test_chain(cfg)
         logger.info("--smoke: all checks passed.")
+        return 0
+
+    if args.login_only:
+        logger.info("--login-only: POST /api/user/login and save tokens; then exit.")
+        store = TokenStore(token_file)
+        ensure_tokens(
+            cfg,
+            store,
+            redirect_uri=redirect_uri,
+            login_url=login,
+            force_handoff=False,
+            timeout_s=float(args.timeout),
+            username=args.username or None,
+            password=args.password or None,
+            prefer_api_login=True,
+        )
         return 0
 
     if args.handoff_only:
