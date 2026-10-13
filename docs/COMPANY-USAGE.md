@@ -2,58 +2,58 @@
 
 ## What we built
 
-MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoints** as **MCP tools** (e.g. level-1 quotes, option chains, company profile), using the **same JWT sessions** as the MDAS website—no separate API keys or manual token paste.
+MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoints** as **MCP tools** (e.g. level-1 quotes, option chains, company profile), using the **same MDAS accounts and entitlements** as the website—no separate API keys or manual token paste.
 
 | Deliverable | Repository / location | Purpose |
 |-------------|----------------------|---------|
-| **MCP HTTP server** | [`MDAS-MCP`](../../) — `server.py` in Docker on **AWS** (or locally on port **8000**) | Exposes tools at `POST /mcp`; forwards `Authorization: Bearer` to WebAPI |
-| **Stdio proxy (MCP host)** | [`MDAS-MCP-Client`](../../../MDAS-MCP-Client/) — `mcp_stdio_proxy.py` on the **user’s PC** | Cursor-compatible bridge: browser login, token file, stdio ↔ MCP HTTP |
-| **WebAPI handoff** | `WebAPI-Server` — `POST /api/user/handoff/mint` and `…/exchange` | Website mints a one-time code; host exchanges it for login-shaped tokens |
-| **Website integration** | MDAS SPA (`mdas-app-dev`) | Login with `?source=mcp`, mint after login, redirect to allowlisted callback |
+| **MCP HTTP server** | `MDAS-MCP`: `server.py` in Docker on **AWS** | Exposes tools at `POST /mcp`; forwards `Authorization: Bearer` to WebAPI |
+| **OAuth authorization server** | MDAS auth | Standard OAuth sign-in for MCP clients; issues the Bearer token |
+| **Client setup** | [`MDAS-MCP-CLIENT`](https://github.com/vt-mdas/MDAS-MCP-CLIENT) | Docs and `mcp.json` example. No local software |
 
-**Important:** The MCP server **does not store user tokens**. The **stdio proxy** (or another MCP host) stores tokens locally and sends them on every `/mcp` request.
+**Important:** The MCP server **does not store user tokens**. Cursor obtains tokens through OAuth, stores them, and sends them on every `/mcp` request.
 
 ---
 
-## Architecture (two processes)
+## Environments
+
+| Environment | MCP URL |
+|-------------|---------|
+| **staging** | `https://mdas-mcp-staging.viewtrade.dev/mcp` |
+| **dev** | `https://mdas-mcp-dev.viewtrade.dev/mcp` |
+
+---
+
+## Architecture
 
 ```
-┌──────────────── Cursor (user PC) ─────────────────┐
-│  Cursor  ←stdio→  mcp_stdio_proxy.py              │
-│       │ opens browser, listens 127.0.0.1:9847     │
-│       │ tokens: %LOCALAPPDATA%\.mdas-mcp\         │
-└───────┼───────────────────────────────────────────┘
-        │ HTTPS  Authorization: Bearer + X-MDAS-*
+┌──────────── Cursor (user PC) ────────────┐
+│  "type": "http"  →  MCP URL              │
+│  OAuth sign-in in browser, token stored  │
+│  by Cursor                               │
+└───────┬──────────────────────────────────┘
+        │ HTTPS  Authorization: Bearer
         ▼
-┌──────────────── AWS (or local Docker) ────────────┐
-│  server.py  —  POST /mcp  (Streamable HTTP)       │
-│  Stateless; calls mdas-api-dev …/api/quote/…      │
-└───────────────────────────────────────────────────┘
+┌──────────────── AWS ──────────────────────┐
+│  server.py  —  POST /mcp  (Streamable HTTP)│
+│  Stateless; calls WebAPI …/api/quote/…     │
+└───────────────────────────────────────────┘
         │
         ▼
-   WebAPI + website (existing MDAS auth & entitlements)
+   WebAPI + OAuth server (MDAS auth & entitlements)
 ```
-
-| Port / URL | Component |
-|------------|-----------|
-| **`http://127.0.0.1:9847/callback`** | Proxy handoff listener (browser lands here after website mint)—**not** the MCP server |
-| **`http://localhost:8000/mcp`** (local) or **`https://mdas-mcp-dev…/mcp`** (AWS) | MCP HTTP transport |
-| **`https://mdas-api-dev.viewtrade.dev`** | WebAPI (login, handoff, quotes) |
-| **`https://mdas-app-dev.viewtrade.dev/login?source=mcp`** | Website login for MCP |
 
 ---
 
-## Sign-in flow (once per machine, or when tokens expire)
+## Sign-in flow
 
-1. User enables **mdas-local** in Cursor (stdio + proxy).
-2. Proxy opens the **website** with `?source=mcp` and `redirect_uri=http://127.0.0.1:9847/callback`.
-3. User logs in (and completes **agreements** on the website if required).
-4. SPA calls **`handoff/mint`**, then redirects the browser to **9847** with `code` + `state`.
-5. Proxy calls **`handoff/exchange`**, saves **`access_token`** / **`refresh_token`** locally.
-6. Proxy bridges Cursor ↔ MCP HTTP with Bearer on every tool call.
-7. If access expires, MCP may refresh via WebAPI; if refresh fails, proxy can **re-open the browser** automatically.
-
-API **`McpHandoff:AllowedRedirectUris`** must include **`http://127.0.0.1:9847/callback`** (already configured for dev).
+1. User adds the MCP config (`"type": "http"` + MCP URL) to `mcp.json`. Cursor detects it automatically.
+2. Cursor calls `/mcp`, gets **401**, and discovers the OAuth authorization server. The server shows under **Needs Attention** as *Needs authentication* with an **Authenticate** button.
+3. User clicks **Authenticate**. Cursor opens the browser to the **MDAS login page** (OAuth authorize endpoint).
+4. User signs in with MDAS credentials.
+5. If the user has entitlements to sign, the browser redirects to the **entitlement signing page**.
+6. The browser redirects to the **handoff page**, which returns to Cursor's OAuth callback. Cursor listens for that callback and exchanges the code for tokens.
+7. On success, Cursor sends `Authorization: Bearer` on every `/mcp` call and loads all tools. The server shows as **Connected**.
+8. **Session expiry:** if the session expires during a chat, Cursor re-authenticates automatically in the background.
 
 ---
 
@@ -61,32 +61,18 @@ API **`McpHandoff:AllowedRedirectUris`** must include **`http://127.0.0.1:9847/c
 
 | Role | Responsibility |
 |------|----------------|
-| **Platform / MCP ops** | Deploy `server.py` to AWS; health check `/health`; per-env `config.json`; allowlist hosted callback URLs if needed |
-| **API team** | Handoff mint/exchange, `McpHandoff` config, session/refresh behavior |
-| **Frontend team** | MCP login UX: `?source=mcp`, post-login **mint**, redirect to `redirect_url` |
-| **End user (Cursor)** | Install **MDAS-MCP-Client**, add MCP config, sign in once, ask for quotes in chat |
-| **Internal developer (local MCP)** | Optional: `docker compose up` in `MDAS-MCP/application` for MCP on **8000**; still use proxy for Cursor |
-
----
-
-## Local development vs AWS
-
-| | **Local dev** | **AWS (target for shared use)** |
-|--|---------------|----------------------------------|
-| MCP HTTP | Docker `localhost:8000` | `https://mdas-mcp-dev.viewtrade.dev/mcp` |
-| Proxy | Same on each developer PC | Same on each user PC |
-| Cursor config | `.cursor/mcp.json` → `mcp_stdio_proxy.py` + `MDAS_MCP_HTTP_URL` | Point `MDAS_MCP_HTTP_URL` at **AWS** URL; **no** local Docker required for users |
-| Tokens | Per user, per machine | Per user, per machine (not on MCP server) |
-
-**End users** receive **[MDAS-MCP-Client](https://github.com/vt-mdas/MDAS-MCP-CLIENT)** only—not the full server repo—unless they operate MCP themselves.
+| **Platform / MCP ops** | Deploy `server.py` to AWS per environment; health check `/health` |
+| **API / auth team** | OAuth server configuration: clients, redirect URIs, scopes, token lifetimes |
+| **Frontend team** | MDAS login, entitlement signing and handoff pages in the OAuth flow |
+| **End user (Cursor)** | Add the MCP URL to `mcp.json`, click **Authenticate**, ask for data in chat |
 
 ---
 
 ## Using MCP in Cursor (internal quick start)
 
-1. **Operators:** ensure hosted MCP and WebAPI dev are up.
-2. **User:** `pip install -r requirements.txt` in **MDAS-MCP-Client**.
-3. **Cursor → MCP:** enable **mdas-local** (stdio, paths in `examples/cursor-mcp.json.example`).
+1. **Operators:** ensure hosted MCP and WebAPI are up for the target environment.
+2. **User:** add the server to `~/.cursor/mcp.json` or `.cursor/mcp.json` (see [`examples/cursor-mcp.json.example`](../examples/cursor-mcp.json.example)).
+3. **User:** in Cursor's MCP settings, click **Authenticate** and complete the browser sign-in (plus entitlement signing if prompted).
 4. **Ask:** e.g. *“Get level 1 quotes for AAPL using the level1 tool.”*
 5. **Generic equity quotes** use **`level1`**, not Polygon tools, unless the user asks for Polygon.
 
@@ -96,7 +82,7 @@ See [USER-MANUAL.md](USER-MANUAL.md) and [demo-prompts.md](demo-prompts.md).
 
 ## MCP tools (68 today)
 
-The MCP server exposes **68 tools** today—all backed by existing WebAPI **quote**, **fundamental**, and **reformat** endpoints. After you connect **mdas-local** in Cursor, the full tool list appears in the MCP panel (names and descriptions update with each server release).
+The MCP server exposes **68 tools** today—all backed by existing WebAPI **quote**, **fundamental**, and **reformat** endpoints. After you connect **mdas-dev** or **mdas-staging** in Cursor, the full tool list appears in the MCP panel (names and descriptions update with each server release).
 
 | Category | Count | Examples |
 |----------|------:|----------|
@@ -114,21 +100,13 @@ Today MCP covers **market-data** quote and fundamental APIs only. **We plan to a
 
 ---
 
-## Authentication — next steps (under research)
+## Authentication
 
-**Today:** **Approach A** (website login → handoff mint/exchange → loopback **9847** → stdio proxy) is what we ship for **Cursor / desktop** internal use.
+Cursor signs in with the **standard MCP OAuth flow** (see [Sign-in flow](#sign-in-flow)). The user needs only the MCP URL; there is no local software, proxy or token file.
 
-**Under research** for broader company and third-party MCP clients:
+Session renewal is automatic: when the session expires during a chat, Cursor re-authenticates in the background.
 
-| Topic | Why it matters |
-|-------|----------------|
-| **OAuth B** (`/authorize` + `/token` + PKCE) | May let HTTP-native clients (e.g. Cursor without stdio proxy) use standard OAuth instead of custom handoff |
-| **Hosted handoff bridge** (no local **9847**) | Needed if clients cannot run a loopback listener—options include pairing/poll, SPA callback + poll, or deeplinks |
-| **Multi-client token model** | Who stores refresh tokens, how clients re-auth, agreement/signing in authorize vs mint flows |
-
-**Design constraint (unchanged):** the **MCP HTTP server on AWS stays stateless**—no long-lived user tokens stored on `server.py`; each client/host owns credential storage.
-
-Reference material: `WebAPI-Server/docs/MCP-API-Server-Developer-Guide.md` (Approach A today; Approach B and hosted callback notes for comparison).
+**Design constraint (unchanged):** the **MCP HTTP server on AWS stays stateless**—no long-lived user tokens stored on `server.py`; each client owns credential storage.
 
 ---
 
@@ -136,11 +114,12 @@ Reference material: `WebAPI-Server/docs/MCP-API-Server-Developer-Guide.md` (Appr
 
 | Symptom | Likely cause |
 |---------|----------------|
-| Browser login works but MCP still 401 | Stale tokens—restart MCP in Cursor or delete `%LOCALAPPDATA%\.mdas-mcp\tokens.json` and sign in again |
-| **9847** never hit | Website did not run **mint** or redirect to loopback—check DevTools → Network |
-| Docker logs show GET `/.well-known` / `/sse` 401/501 | Normal probes when something hits MCP over HTTP without stdio proxy |
+| Browser doesn't open after **Authenticate** | Toggle the server off/on in Cursor's MCP settings, or restart Cursor |
+| Handoff page shown but Cursor doesn't connect | Cursor closed or not listening for the callback; click **Authenticate** again |
+| Server back to *Needs authentication* mid-session | Background re-auth didn't complete; click **Authenticate** again |
+| Login page errors on redirect | Client redirect URI not registered on the OAuth server for that environment |
 | Tool calls **polygon/snapshot** for “quote AAPL” | Ask explicitly for **`level1`**, or use updated tool descriptions (prefer `level1` for generic quotes) |
-| Agreements blocking quotes | Complete signing on the website; retry tool |
+| Entitlement signing page loops | Signing not saved on the MDAS side; check with the frontend / auth team |
 
 ---
 
@@ -148,14 +127,13 @@ Reference material: `WebAPI-Server/docs/MCP-API-Server-Developer-Guide.md` (Appr
 
 | Document | Use |
 |----------|-----|
-| [APPROACH-A-STDIO-PROXY.md](APPROACH-A-STDIO-PROXY.md) | Proxy env vars, smoke test, handoff |
-| [DEMO.md](DEMO.md) / [DEMO-CHECKLIST.md](DEMO-CHECKLIST.md) | Demo runbook |
-| [../README.md](../../README.md) | Server deploy, distribution to others |
-| [MDAS-MCP-Client README](../../../MDAS-MCP-Client/README.md) | End-user kit |
-| `WebAPI-Server/docs/MCP-*-Developer-Guide.md` | API, frontend, and MCP host contracts |
+| [USER-MANUAL.md](USER-MANUAL.md) | End-user setup, sign-in, and errors |
+| [demo-prompts.md](demo-prompts.md) | Example prompts |
+| [MDAS-MCP-CLIENT README](../README.md) | Client setup quick start |
+| `MDAS-MCP/README.md` | Server deploy (operators) |
 
 ---
 
 ## Summary
 
-We added **MCP access to MDAS market data** using **existing WebAPI auth**: website login → handoff → local token storage → **stateless MCP on AWS** — **68 quote and fundamental tools today**, with **all WebAPI management APIs planned as MCP tools** next. **Cursor users** run a small **stdio proxy** on their machine; **operators** run **MDAS-MCP** in Docker/AWS. This is the supported internal pattern for **dev** and the basis for rolling out to broader company use.
+We added **MCP access to MDAS market data** using **existing MDAS accounts and entitlements**: standard OAuth sign-in → **stateless MCP on AWS** — **68 quote and fundamental tools today**, with **all WebAPI management APIs planned as MCP tools** next. **Cursor users** only add the MCP URL (staging or dev) to `mcp.json` and click **Authenticate**; **operators** run **MDAS-MCP** in Docker/AWS.

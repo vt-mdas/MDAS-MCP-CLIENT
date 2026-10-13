@@ -1,8 +1,8 @@
 # MDAS-MCP User Manual
 
-This guide is for **people who use MDAS through an MCP client** (for example Cursor). It explains how to connect, sign in, and ask your assistant for market data.
+This guide is for **people who use MDAS through Cursor**. It explains how to connect, sign in and ask your assistant for market data.
 
-You do **not** need to install or run the MCP server yourself. Your team provides the **MCP server URL** (for example a hosted `https://…/mcp` address).
+You don't install or run anything locally. Cursor connects directly to the hosted MDAS-MCP server.
 
 ---
 
@@ -15,7 +15,7 @@ MDAS-MCP lets your AI assistant call MDAS market-data capabilities as **tools**,
 - Fund / ETF data
 - Reformatted quote endpoints
 
-You talk to the assistant in natural language; it chooses the right tool. There is **no** “paste your API token into the chat” step—your MCP app handles authentication securely.
+You ask in plain language and the assistant picks the right tool. You never paste an API token into chat; Cursor handles authentication.
 
 ---
 
@@ -23,84 +23,71 @@ You talk to the assistant in natural language; it chooses the right tool. There 
 
 | Item | Notes |
 |------|--------|
-| **MCP client** | Cursor or another app that supports HTTP MCP with sign-in / Bearer tokens |
-| **MDAS account** | Same credentials you use on the MDAS website |
-| **MCP server URL** | From your administrator (dev example: `https://mdas-mcp-dev.viewtrade.dev/mcp`) |
-| **Network** | Access to the MDAS website and MCP host URLs your org uses |
+| **Cursor** | Recent version with remote HTTP MCP support |
+| **MDAS account** | The same credentials you use on the MDAS website |
+| **MCP server URL** | staging: `https://mdas-mcp-staging.viewtrade.dev/mcp` · dev: `https://mdas-mcp-dev.viewtrade.dev/mcp` |
+| **Network** | Access to the MDAS website and the MCP host |
 
 ---
 
-## 3. Connect your MCP client
+## 3. Connect Cursor
 
 ### 3.1 Add the server
 
-Your admin will give you a URL ending in `/mcp`. In Cursor, add an HTTP MCP server pointing at that URL.
-
-Example (your URL will differ):
+Add an HTTP MCP server to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (workspace):
 
 ```json
 {
   "mcpServers": {
-    "mdas": {
+    "mdas-staging": {
       "type": "http",
-      "url": "https://mdas-mcp-dev.viewtrade.dev/mcp"
+      "url": "https://mdas-mcp-staging.viewtrade.dev/mcp"
     }
   }
 }
 ```
 
-The exact settings screen depends on your Cursor version; follow your org’s internal setup doc if one exists.
+For **dev**, set `url` to `https://mdas-mcp-dev.viewtrade.dev/mcp` (and name the server something like `mdas-dev`).
 
-### 3.2 Sign in (first time)
+Cursor detects the change automatically. You don't need to restart.
 
-MDAS-MCP does **not** work without signing in. Use either path:
+### 3.2 Authenticate
 
-**A — Same as REST API (access_token)**  
-Call `POST /api/user/login`, then send `Authorization: Bearer {access_token}` on every MCP request (stdio proxy can do this for you):
+MDAS-MCP tools load only after you sign in.
 
-```powershell
-python mcp_stdio_proxy.py --login-only --username YOUR_USER --password YOUR_PASS
-```
+1. In Cursor's **MCP** settings, the server appears under **Needs Attention** with the status *Needs authentication*. This happens when the server is freshly added or not yet authenticated.
+2. Click **Authenticate**.
+3. Your browser opens the **MDAS login page**. Sign in with your MDAS username and password.
+4. **Entitlement signing (if required):** if you have entitlements to sign, you are redirected to the signing page. Complete it to continue.
+5. The browser redirects to the **handoff page**, which sends you back to Cursor. Cursor waits for this callback, so keep it open.
+6. On success, the server shows as **Connected** and Cursor loads all MDAS tools.
 
-Or set `MDAS_ACCESS_TOKEN` (and optionally `MDAS_REFRESH_TOKEN`) from a login response before starting the proxy.
+Never type passwords or tokens into the chat window.
 
-**B — Browser handoff (Approach A)**  
-When you connect or use a tool, your MCP client may:
+### 3.3 Session expiry
 
-1. **Open your browser** to the MDAS website login page (with `?source=mcp`).
-2. **Log in** with your normal MDAS username and password.
-3. Complete any **agreement signing** on the website if prompted.
-4. Finish the short **handoff** step (browser may redirect briefly; your MCP app completes this in the background).
-5. Return to Cursor—you can now use MDAS tools.
-
-You should **not** type passwords or long-lived tokens into the chat window.
-
-When your access token expires, a properly configured MCP client refreshes it automatically in the background (same as the website). You only need to sign in again if refresh fails or your session was revoked.
-
-### 3.3 Agreement signing
-
-If MDAS requires updated agreements, the website will ask you to sign. Do that in the **browser**, then try your request again in the assistant. Signing is always done on the MDAS website, not inside the MCP tool list.
+If your session expires during a chat, Cursor re-authenticates in the background and your request continues. You normally don't need to sign in again.
 
 ---
 
 ## 4. Using MDAS in conversation
 
-Once connected and signed in, ask normally. The assistant picks tools for you.
+Once connected, ask normally. The assistant picks tools for you.
 
 ### Example requests
 
 | You might say | Typical data |
 |---------------|--------------|
-| “Level 1 for AAPL and MSFT” | Equity quotes |
-| “Option chain dates for SPY” | Available expiration dates |
-| “Option chain for SPY on 2026-06-20” | Chain for one date |
-| “Best quote for TSLA” | Best bid/offer snapshot |
-| “Search symbols matching apple” | Symbol search |
-| “ETF screener filters” | Fund / ETF tools |
+| "Level 1 for AAPL and MSFT" | Equity quotes |
+| "Option chain dates for SPY" | Available expiration dates |
+| "Option chain for SPY on 2026-06-20" | Chain for one date |
+| "Best quote for TSLA" | Best bid/offer snapshot |
+| "Search symbols matching apple" | Symbol search |
+| "ETF screener filters" | Fund / ETF tools |
 
 ### Tool names (optional reference)
 
-You rarely need these names yourself; the assistant sees them automatically. Common groups:
+You rarely need these yourself; the assistant sees them automatically. Common groups:
 
 - **Quotes:** `level1`, `quote_best_quote`, `quote_option_chain`, `quote_symbol_search`, …
 - **Fundamentals:** `fund_etfs`, `fund_option_corporate_actions`, …
@@ -110,50 +97,47 @@ You rarely need these names yourself; the assistant sees them automatically. Com
 
 ## 5. When something goes wrong
 
-### “Not connected” or authentication errors
+### Connection and sign-in
 
 | What you see | What to do |
 |--------------|------------|
-| Prompt to **sign in** or **open browser** | Follow the link; log in on the MDAS website; return to Cursor |
-| **401** or “authentication required” | Sign in again through your MCP client’s MDAS connection flow |
-| Message about **session expired** or **re-login** | Same as above—your session ended; sign in again |
-| **Sign agreement** or signing URL in the response | Open the link in your browser, complete signing, retry your question |
-| Tools worked before, now fail after idle time | Sign in again; tokens expire like a normal website session |
+| Server doesn't appear in Cursor | Check `mcp.json` is valid JSON and the `url` ends in `/mcp`; restart Cursor |
+| *Needs authentication* with an **Authenticate** button | Click **Authenticate** and complete the browser sign-in |
+| Browser doesn't open after clicking **Authenticate** | Toggle the server off and on in the MCP settings, or restart Cursor |
+| Browser stuck on the handoff page | Make sure Cursor is still running, then click **Authenticate** again |
+| Server returns to *Needs authentication* mid-session | Background re-authentication didn't complete. Click **Authenticate** again |
+| Asked to sign entitlements | Complete signing in the browser; the flow continues to the handoff page |
 
 ### Data or permission errors
 
 | What you see | What to do |
 |--------------|------------|
-| “User is suspended” or similar | Contact your MDAS administrator |
-| Empty or “not found” results | Check symbol spelling, market, and entitlements on the website |
+| "User is suspended" or similar | Contact your MDAS administrator |
+| Empty or "not found" results | Check symbol spelling, market and your entitlements on the website |
 | Slow responses | Retry; if it persists, note the time and symbol and contact support |
 
 ### What not to do
 
-- Do **not** paste JWTs, refresh tokens, or passwords into chat.
-- Do **not** share screenshots of tokens or login URLs with codes in them.
-- Do **not** expect a `login` tool inside MCP—you always use the **website + browser** flow your MCP client provides.
+- Don't paste JWTs, refresh tokens or passwords into chat.
+- Don't share screenshots of tokens, or of browser URLs that contain `code=` or `state=`.
+- Don't look for a `login` tool in MCP. Sign-in always goes through Cursor's **Authenticate** button and the browser.
 
 ---
 
-## 6. Privacy and security (for users)
+## 6. Privacy and security
 
-- Your MCP client stores the access token securely (same idea as staying logged in on the website).
-- Each request to MDAS uses your personal entitlements—what you can see on the website is what tools can fetch.
-- If you leave your machine unlocked, someone with access to Cursor could use your active MDAS session; lock your PC when away.
+- Cursor stores your token securely, much like staying logged in on the website.
+- Every request uses your personal entitlements: tools can fetch only what you can see on the website.
+- Anyone with access to your unlocked machine could use your active MDAS session in Cursor. Lock your PC when you step away.
 
 ---
 
 ## 7. Quick checklist
 
-1. Obtain the **MCP URL** from your administrator.
-2. Add it in **Cursor** (or your MCP client).
-3. **Sign in** when prompted (browser → MDAS website → return to client).
-4. Ask for data in plain language.
-5. If auth fails, **sign in again** or complete **agreements** on the website.
+1. Add the MCP URL for your environment (staging or dev) to `mcp.json` as an `http` server.
+2. In Cursor's MCP settings, click **Authenticate**.
+3. Sign in on the MDAS login page, sign entitlements if asked, and let the handoff page return you to Cursor.
+4. Confirm the server shows **Connected** with tools loaded.
+5. Ask for data in plain language.
 
-For **running or deploying** the MCP server (Docker, AWS, config file), see `README.md` at the repo root (`MDAS-MCP/README.md`)—that is for operators and developers, not end users.
-
-For a **live demo with Cursor**, presenters use [DEMO.md](DEMO.md), [DEMO-CHECKLIST.md](DEMO-CHECKLIST.md), and [demo-prompts.md](demo-prompts.md).
-
-For internal auth/API details, your platform team may reference `MCP-Server-Developer-Guide.md` in the WebAPI repository.
+For demo prompts, see [demo-prompts.md](demo-prompts.md). For architecture and roles, see [COMPANY-USAGE.md](COMPANY-USAGE.md).

@@ -1,6 +1,6 @@
 # MDAS-MCP demo prompts (Cursor)
 
-Copy these into Cursor **after** MCP is connected and you are signed in. Use the symbols your demo account is entitled to see.
+Copy these into Cursor **after** the MDAS server shows **Connected** in Cursor's MCP settings (see the [README](../README.md) for setup). Use the symbols your demo account is entitled to see.
 
 **Recommended demo symbols:** `AAPL`, `MSFT`, `SPY` (adjust if your entitlements differ).
 
@@ -18,7 +18,7 @@ Get level 1 quotes for AAPL and MSFT.
 |----------|--|
 | Tool | `level1` (or similar) |
 | Success | JSON with last price, bid/ask, volume, etc. for both symbols |
-| Failure | Auth JSON with `login_url` → re-sign in; API 500 / S3Service → fix WebAPI first |
+| Failure | Server shows *Needs authentication* → click **Authenticate**; API 500 / S3Service → fix WebAPI first |
 
 ### Prompt 2 (optional)
 
@@ -95,10 +95,10 @@ List ETF screener filters available in MDAS.
 
 | Symptom | Likely cause | What to tell the audience |
 |---------|----------------|---------------------------|
-| “Authentication required” / `login_url` in JSON | Session expired; refresh failed | “We sign in on the MDAS website; the assistant never sees your password.” |
+| Server shows *Needs authentication* | Session expired and background re-auth didn't complete | Click **Authenticate**: “We sign in on the MDAS website; the assistant never sees your password.” |
 | Error 500 / S3Service in API logs | API deployment DI bug | “Upstream API issue—we validate API with curl before MCP.” |
 | Empty or “not found” | Symbol or entitlement | “This account may not have that market; we’ll try AAPL instead.” |
-| MCP connection refused | Docker not running | “Local MCP container needs to be up—health check on port 8000.” |
+| MCP server unreachable / no tools | Hosted MCP for that environment is down | “The hosted MCP service is being checked—we’ll switch to the other environment.” |
 
 ---
 
