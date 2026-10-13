@@ -6,7 +6,7 @@ MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoin
 
 | Deliverable | Repository / location | Purpose |
 |-------------|----------------------|---------|
-| **MCP HTTP server** | `MDAS-MCP`: `server.py` in Docker on **AWS** | Exposes tools at `POST /mcp`; forwards `Authorization: Bearer` to WebAPI |
+| **MCP HTTP server** | `MDAS-MCP`, hosted on **AWS** | Exposes tools at `POST /mcp`; forwards `Authorization: Bearer` to WebAPI |
 | **OAuth authorization server** | MDAS auth | Standard OAuth sign-in for MCP clients; issues the Bearer token |
 | **Client setup** | [`MDAS-MCP-CLIENT`](https://github.com/vt-mdas/MDAS-MCP-CLIENT) | Docs and `mcp.json` example. No local software |
 
@@ -33,10 +33,10 @@ MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoin
 └───────┬──────────────────────────────────┘
         │ HTTPS  Authorization: Bearer
         ▼
-┌──────────────── AWS ──────────────────────┐
-│  server.py  —  POST /mcp  (Streamable HTTP)│
+┌─────────────────── AWS ────────────────────┐
+│  MDAS-MCP  —  POST /mcp  (Streamable HTTP) │
 │  Stateless; calls WebAPI …/api/quote/…     │
-└───────────────────────────────────────────┘
+└────────────────────────────────────────────┘
         │
         ▼
    WebAPI + OAuth server (MDAS auth & entitlements)
@@ -53,7 +53,24 @@ MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoin
 5. If the user has entitlements to sign, the browser redirects to the **entitlement signing page**.
 6. The browser redirects to the **handoff page**, which returns to Cursor's OAuth callback. Cursor listens for that callback and exchanges the code for tokens.
 7. On success, Cursor sends `Authorization: Bearer` on every `/mcp` call and loads all tools. The server shows as **Connected**.
-8. **Session expiry:** if the session expires during a chat, Cursor re-authenticates automatically in the background.
+8. **Session expiry:** if the session expires or is revoked during a chat, Cursor re-authenticates automatically in the background. No user action is needed.
+
+### How the token gets to Cursor
+
+The MDAS authorization server is built on **OpenIddict** and uses the standard OAuth 2.1 **authorization code + PKCE** flow. The server never pushes a token to Cursor; Cursor requests it.
+
+| Step | Where | What happens |
+|------|-------|--------------|
+| 1. Discovery | Cursor → MDAS-MCP | `/mcp` returns **401**; Cursor reads the server metadata to find the authorization server's **authorize** and **token** endpoints. |
+| 2. Authorize | Browser → OpenIddict | Cursor generates a secret **PKCE `code_verifier`** and opens the **authorize endpoint** with its hash (`code_challenge`), `client_id` and `redirect_uri`. |
+| 3. Login + entitlements | Browser → MDAS pages | OpenIddict sends the user to the MDAS login page and, if needed, the entitlement signing page. |
+| 4. Handoff | Browser → OpenIddict | The handoff page POSTs `return_url` and the MDAS `access_token` (body parameters) to `/connect/oauth-bridge`, handing the MDAS login back to the authorization flow. |
+| 5. Callback | Browser → Cursor | The browser is redirected to Cursor's `redirect_uri` with a short-lived, single-use **authorization code**. This is a code, not a token. |
+| 6. Token exchange | Cursor → OpenIddict | Cursor posts the code **plus the original `code_verifier`** to the **token endpoint**. OpenIddict verifies it against the hash from step 2 and returns the **access token** in the response. |
+| 7. Use | Cursor → MDAS-MCP | Cursor stores the tokens and sends `Authorization: Bearer <access_token>` on every `/mcp` call. |
+| Renewal | Cursor → OpenIddict | When the session expires or is revoked, Cursor renews it automatically in the background. No user action is needed. |
+
+**Why this is safe:** the token Cursor uses for MCP never passes through the browser. An intercepted authorization code is useless without the `code_verifier`, which only Cursor holds.
 
 ---
 
@@ -61,7 +78,7 @@ MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoin
 
 | Role | Responsibility |
 |------|----------------|
-| **Platform / MCP ops** | Deploy `server.py` to AWS per environment; health check `/health` |
+| **Platform / MCP ops** | Deploy and monitor the hosted MDAS-MCP service per environment |
 | **API / auth team** | OAuth server configuration: clients, redirect URIs, scopes, token lifetimes |
 | **Frontend team** | MDAS login, entitlement signing and handoff pages in the OAuth flow |
 | **End user (Cursor)** | Add the MCP URL to `mcp.json`, click **Authenticate**, ask for data in chat |
@@ -92,8 +109,6 @@ The MCP server exposes **68 tools** today—all backed by existing WebAPI **quot
 | **Generic escape hatches** | 2 | `quote_endpoint`, `fundamental_endpoint` — any registered quote/fundamental path |
 | **Reformat helpers** | 13 | `reformat_*` — same data, common display shapes (equity, option, bonds, FX, search, historical, etc.) |
 
-**Source:** `quote_tools.py` registers 53 tools; `server.py` adds 15 (2 escape hatches + 13 `reformat_*`).
-
 ### Roadmap — management API tools (planned)
 
 Today MCP covers **market-data** quote and fundamental APIs only. **We plan to add MCP tools for all WebAPI management APIs**—e.g. user and session administration, firms, entitlements, permissions, integrations, logging, and other operator/admin endpoints—so assistants can perform the same management tasks allowed by a user’s JWT and role, not only market-data lookups. New tools will ship incrementally; this doc will be updated as each area is exposed.
@@ -104,9 +119,9 @@ Today MCP covers **market-data** quote and fundamental APIs only. **We plan to a
 
 Cursor signs in with the **standard MCP OAuth flow** (see [Sign-in flow](#sign-in-flow)). The user needs only the MCP URL; there is no local software, proxy or token file.
 
-Session renewal is automatic: when the session expires during a chat, Cursor re-authenticates in the background.
+Session renewal is automatic: when the session expires or is revoked during a chat, Cursor re-authenticates in the background.
 
-**Design constraint (unchanged):** the **MCP HTTP server on AWS stays stateless**—no long-lived user tokens stored on `server.py`; each client owns credential storage.
+**Design constraint (unchanged):** the **MCP HTTP server on AWS stays stateless**—no long-lived user tokens stored on the server; each client owns credential storage.
 
 ---
 
@@ -116,7 +131,6 @@ Session renewal is automatic: when the session expires during a chat, Cursor re-
 |---------|----------------|
 | Browser doesn't open after **Authenticate** | Toggle the server off/on in Cursor's MCP settings, or restart Cursor |
 | Handoff page shown but Cursor doesn't connect | Cursor closed or not listening for the callback; click **Authenticate** again |
-| Server back to *Needs authentication* mid-session | Background re-auth didn't complete; click **Authenticate** again |
 | Login page errors on redirect | Client redirect URI not registered on the OAuth server for that environment |
 | Tool calls **polygon/snapshot** for “quote AAPL” | Ask explicitly for **`level1`**, or use updated tool descriptions (prefer `level1` for generic quotes) |
 | Entitlement signing page loops | Signing not saved on the MDAS side; check with the frontend / auth team |
@@ -136,4 +150,4 @@ Session renewal is automatic: when the session expires during a chat, Cursor re-
 
 ## Summary
 
-We added **MCP access to MDAS market data** using **existing MDAS accounts and entitlements**: standard OAuth sign-in → **stateless MCP on AWS** — **68 quote and fundamental tools today**, with **all WebAPI management APIs planned as MCP tools** next. **Cursor users** only add the MCP URL (staging or dev) to `mcp.json` and click **Authenticate**; **operators** run **MDAS-MCP** in Docker/AWS.
+We added **MCP access to MDAS market data** using **existing MDAS accounts and entitlements**: standard OAuth sign-in → **stateless MCP on AWS** — **68 quote and fundamental tools today**, with **all WebAPI management APIs planned as MCP tools** next. **Cursor users** only add the MCP URL (staging or dev) to `mcp.json` and click **Authenticate**; **operators** run the hosted **MDAS-MCP** service on AWS.

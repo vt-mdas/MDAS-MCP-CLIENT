@@ -18,7 +18,7 @@ Get level 1 quotes for AAPL and MSFT.
 |----------|--|
 | Tool | `level1` (or similar) |
 | Success | JSON with last price, bid/ask, volume, etc. for both symbols |
-| Failure | Server shows *Needs authentication* → click **Authenticate**; API 500 / S3Service → fix WebAPI first |
+| Failure | API 500 / S3Service → fix WebAPI first |
 
 ### Prompt 2 (optional)
 
@@ -95,7 +95,6 @@ List ETF screener filters available in MDAS.
 
 | Symptom | Likely cause | What to tell the audience |
 |---------|----------------|---------------------------|
-| Server shows *Needs authentication* | Session expired and background re-auth didn't complete | Click **Authenticate**: “We sign in on the MDAS website; the assistant never sees your password.” |
 | Error 500 / S3Service in API logs | API deployment DI bug | “Upstream API issue—we validate API with curl before MCP.” |
 | Empty or “not found” | Symbol or entitlement | “This account may not have that market; we’ll try AAPL instead.” |
 | MCP server unreachable / no tools | Hosted MCP for that environment is down | “The hosted MCP service is being checked—we’ll switch to the other environment.” |

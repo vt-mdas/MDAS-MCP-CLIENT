@@ -66,7 +66,7 @@ Never type passwords or tokens into the chat window.
 
 ### 3.3 Session expiry
 
-If your session expires during a chat, Cursor re-authenticates in the background and your request continues. You normally don't need to sign in again.
+If your session expires or is revoked during a chat, Cursor re-authenticates automatically in the background and your request continues. You don't need to sign in again.
 
 ---
 
@@ -105,7 +105,6 @@ You rarely need these yourself; the assistant sees them automatically. Common gr
 | *Needs authentication* with an **Authenticate** button | Click **Authenticate** and complete the browser sign-in |
 | Browser doesn't open after clicking **Authenticate** | Toggle the server off and on in the MCP settings, or restart Cursor |
 | Browser stuck on the handoff page | Make sure Cursor is still running, then click **Authenticate** again |
-| Server returns to *Needs authentication* mid-session | Background re-authentication didn't complete. Click **Authenticate** again |
 | Asked to sign entitlements | Complete signing in the browser; the flow continues to the handoff page |
 
 ### Data or permission errors

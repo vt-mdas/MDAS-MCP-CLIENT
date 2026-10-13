@@ -45,7 +45,7 @@ Ask in chat, for example: *"Get level 1 quotes for AAPL and MSFT."* See [`docs/d
 
 ### Session expiry
 
-If your session expires during a chat, Cursor re-authenticates in the background. You don't need to sign in again.
+If your session expires or is revoked during a chat, Cursor re-authenticates automatically in the background. You don't need to sign in again.
 
 ## Troubleshooting
 
@@ -54,7 +54,6 @@ If your session expires during a chat, Cursor re-authenticates in the background
 | Server doesn't appear in Cursor | Check that `mcp.json` is valid JSON and the `url` ends in `/mcp`; restart Cursor |
 | No **Authenticate** button / browser doesn't open | Toggle the server off and on in Cursor's **MCP** settings, or restart Cursor |
 | Browser stays on the handoff page and Cursor doesn't connect | Make sure Cursor is still open, then click **Authenticate** again |
-| Server goes back to *Needs authentication* | Background re-authentication didn't complete. Click **Authenticate** again |
 | Connected but no tools | Check the URL matches the environment whose credentials you used |
 | Duplicate tools | The same environment is configured twice (for example, in both global and workspace `mcp.json`) |
 
