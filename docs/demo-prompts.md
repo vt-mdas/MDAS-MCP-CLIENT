@@ -4,6 +4,8 @@ Copy these into Cursor **after** the MDAS server shows **Connected** in Cursor's
 
 **Recommended demo symbols:** `AAPL`, `MSFT`, `SPY` (adjust if your entitlements differ).
 
+> **Before the demo:** don't sign in with the demo account anywhere else (website, another Cursor) during the demo. That revokes the Cursor session.
+
 ---
 
 ## Act 1 — Equity quotes (happy path)
@@ -18,7 +20,7 @@ Get level 1 quotes for AAPL and MSFT.
 |----------|--|
 | Tool | `level1` (or similar) |
 | Success | JSON with last price, bid/ask, volume, etc. for both symbols |
-| Failure | API 500 / S3Service → fix WebAPI first |
+| Failure | Server shows *Needs authentication* → session revoked, click **Authenticate**; API 500 / S3Service → fix WebAPI first |
 
 ### Prompt 2 (optional)
 
@@ -98,6 +100,7 @@ List ETF screener filters available in MDAS.
 | Error 500 / S3Service in API logs | API deployment DI bug | “Upstream API issue—we validate API with curl before MCP.” |
 | Empty or “not found” | Symbol or entitlement | “This account may not have that market; we’ll try AAPL instead.” |
 | MCP server unreachable / no tools | Hosted MCP for that environment is down | “The hosted MCP service is being checked—we’ll switch to the other environment.” |
+| Server shows *Needs authentication* mid-demo | Session revoked (demo account signed in elsewhere) or renewal failed | Click **Authenticate**: “MDAS allows one active session per account, so signing in elsewhere ends this one. We sign in on the MDAS website; the assistant never sees your password.” |
 
 ---
 

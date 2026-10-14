@@ -34,7 +34,7 @@ You ask in plain language and the assistant picks the right tool. You never past
 
 ### 3.1 Add the server
 
-Add an HTTP MCP server to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (workspace):
+Add an HTTP MCP server to `~/.cursor/mcp.json` (global; on Windows `%USERPROFILE%\.cursor\mcp.json`) or `.cursor/mcp.json` (workspace):
 
 ```json
 {
@@ -55,18 +55,21 @@ Cursor detects the change automatically. You don't need to restart.
 
 MDAS-MCP tools load only after you sign in.
 
-1. In Cursor's **MCP** settings, the server appears under **Needs Attention** with the status *Needs authentication*. This happens when the server is freshly added or not yet authenticated.
+1. In Cursor's **MCP** settings, the server appears under **Needs Attention** with the status *Needs authentication*. This happens when the server is freshly added, not yet authenticated, or your session was revoked.
 2. Click **Authenticate**.
 3. Your browser opens the **MDAS login page**. Sign in with your MDAS username and password.
 4. **Entitlement signing (if required):** if you have entitlements to sign, you are redirected to the signing page. Complete it to continue.
-5. The browser redirects to the **handoff page**, which sends you back to Cursor. Cursor waits for this callback, so keep it open.
+5. After login (and entitlement signing if needed), the browser returns you to Cursor. Keep Cursor open until that finishes.
 6. On success, the server shows as **Connected** and Cursor loads all MDAS tools.
 
 Never type passwords or tokens into the chat window.
 
 ### 3.3 Session expiry
 
-If your session expires or is revoked during a chat, Cursor re-authenticates automatically in the background and your request continues. You don't need to sign in again.
+| Case | What happens |
+|------|--------------|
+| Access token expires; session still valid | Cursor renews it in the background and your request continues. No re-login needed. |
+| Session revoked (for example, you signed in elsewhere) or renewal fails | The server shows *Needs authentication* again. Click **Authenticate** and sign in. |
 
 ---
 
@@ -102,10 +105,13 @@ You rarely need these yourself; the assistant sees them automatically. Common gr
 | What you see | What to do |
 |--------------|------------|
 | Server doesn't appear in Cursor | Check `mcp.json` is valid JSON and the `url` ends in `/mcp`; restart Cursor |
-| *Needs authentication* with an **Authenticate** button | Click **Authenticate** and complete the browser sign-in |
+| **405 Method Not Allowed** | The URL must end in `/mcp`, not the bare host |
+| *Needs authentication* with an **Authenticate** button (first time, or mid-session after a revoke) | Click **Authenticate** and complete the browser sign-in |
+| Worked, then auth or tools fail | Session revoked or renewal failed. Click **Authenticate** and complete the browser sign-in |
+| Connected but empty tools | The environment URL doesn't match the credentials you used, or toggle the server off and on in the MCP settings |
 | Browser doesn't open after clicking **Authenticate** | Toggle the server off and on in the MCP settings, or restart Cursor |
-| Browser stuck on the handoff page | Make sure Cursor is still running, then click **Authenticate** again |
-| Asked to sign entitlements | Complete signing in the browser; the flow continues to the handoff page |
+| Browser doesn't return to Cursor, or Cursor doesn't connect | Make sure Cursor is still running, then click **Authenticate** again |
+| Asked to sign entitlements | Complete signing in the browser; the browser then returns you to Cursor |
 
 ### Data or permission errors
 
@@ -135,7 +141,7 @@ You rarely need these yourself; the assistant sees them automatically. Common gr
 
 1. Add the MCP URL for your environment (staging or dev) to `mcp.json` as an `http` server.
 2. In Cursor's MCP settings, click **Authenticate**.
-3. Sign in on the MDAS login page, sign entitlements if asked, and let the handoff page return you to Cursor.
+3. Sign in on the MDAS login page, sign entitlements if asked, and let the browser return you to Cursor.
 4. Confirm the server shows **Connected** with tools loaded.
 5. Ask for data in plain language.
 

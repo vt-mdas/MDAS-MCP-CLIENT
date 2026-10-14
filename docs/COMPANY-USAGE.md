@@ -51,9 +51,11 @@ MDAS MCP lets AI assistants call **existing WebAPI quote and fundamental endpoin
 3. User clicks **Authenticate**. Cursor opens the browser to the **MDAS login page** (OAuth authorize endpoint).
 4. User signs in with MDAS credentials.
 5. If the user has entitlements to sign, the browser redirects to the **entitlement signing page**.
-6. The browser redirects to the **handoff page**, which returns to Cursor's OAuth callback. Cursor listens for that callback and exchanges the code for tokens.
+6. After login, the browser is redirected back to Cursor with an authorization code, and Cursor exchanges it for tokens (see [How the token gets to Cursor](#how-the-token-gets-to-cursor)).
 7. On success, Cursor sends `Authorization: Bearer` on every `/mcp` call and loads all tools. The server shows as **Connected**.
-8. **Session expiry:** if the session expires or is revoked during a chat, Cursor re-authenticates automatically in the background. No user action is needed.
+8. **Session expiry:**
+   - **Access token expires, refresh still valid:** Cursor refreshes in the background. No user action is needed.
+   - **Session revoked (single-session: login elsewhere) or refresh fails:** the server returns to *Needs authentication*. The user clicks **Authenticate** and the flow restarts at step 3.
 
 ### How the token gets to Cursor
 
@@ -63,12 +65,11 @@ The MDAS authorization server is built on **OpenIddict** and uses the standard O
 |------|-------|--------------|
 | 1. Discovery | Cursor → MDAS-MCP | `/mcp` returns **401**; Cursor reads the server metadata to find the authorization server's **authorize** and **token** endpoints. |
 | 2. Authorize | Browser → OpenIddict | Cursor generates a secret **PKCE `code_verifier`** and opens the **authorize endpoint** with its hash (`code_challenge`), `client_id` and `redirect_uri`. |
-| 3. Login + entitlements | Browser → MDAS pages | OpenIddict sends the user to the MDAS login page and, if needed, the entitlement signing page. |
-| 4. Handoff | Browser → OpenIddict | The handoff page POSTs `return_url` and the MDAS `access_token` (body parameters) to `/connect/oauth-bridge`, handing the MDAS login back to the authorization flow. |
-| 5. Callback | Browser → Cursor | The browser is redirected to Cursor's `redirect_uri` with a short-lived, single-use **authorization code**. This is a code, not a token. |
+| 3. Login + entitlements | Browser → MDAS pages | OpenIddict sends the user to the MDAS login page (`source=oauth`) and, if needed, the entitlement signing page. |
+| 4. OAuth bridge (internal) | MDAS SPA → API | After login, the MDAS website (SPA) POSTs `return_url` and the MDAS `access_token` (body parameters) to `/connect/oauth-bridge`, which continues to the authorize endpoint. Users usually don't see this step. |
+| 5. Callback | Browser → Cursor | The authorize endpoint redirects the browser to Cursor's `redirect_uri` with a short-lived, single-use **authorization code**. This is a code, not a token. |
 | 6. Token exchange | Cursor → OpenIddict | Cursor posts the code **plus the original `code_verifier`** to the **token endpoint**. OpenIddict verifies it against the hash from step 2 and returns the **access token** in the response. |
 | 7. Use | Cursor → MDAS-MCP | Cursor stores the tokens and sends `Authorization: Bearer <access_token>` on every `/mcp` call. |
-| Renewal | Cursor → OpenIddict | When the session expires or is revoked, Cursor renews it automatically in the background. No user action is needed. |
 
 **Why this is safe:** the token Cursor uses for MCP never passes through the browser. An intercepted authorization code is useless without the `code_verifier`, which only Cursor holds.
 
@@ -80,7 +81,7 @@ The MDAS authorization server is built on **OpenIddict** and uses the standard O
 |------|----------------|
 | **Platform / MCP ops** | Deploy and monitor the hosted MDAS-MCP service per environment |
 | **API / auth team** | OAuth server configuration: clients, redirect URIs, scopes, token lifetimes |
-| **Frontend team** | MDAS login, entitlement signing and handoff pages in the OAuth flow |
+| **Frontend team** | MDAS login and entitlement signing pages, and the SPA's call to the OAuth bridge |
 | **End user (Cursor)** | Add the MCP URL to `mcp.json`, click **Authenticate**, ask for data in chat |
 
 ---
@@ -115,22 +116,15 @@ Today MCP covers **market-data** quote and fundamental APIs only. **We plan to a
 
 ---
 
-## Authentication
-
-Cursor signs in with the **standard MCP OAuth flow** (see [Sign-in flow](#sign-in-flow)). The user needs only the MCP URL; there is no local software, proxy or token file.
-
-Session renewal is automatic: when the session expires or is revoked during a chat, Cursor re-authenticates in the background.
-
-**Design constraint (unchanged):** the **MCP HTTP server on AWS stays stateless**—no long-lived user tokens stored on the server; each client owns credential storage.
-
----
-
 ## Troubleshooting (common)
 
 | Symptom | Likely cause |
 |---------|----------------|
+| **405 Method Not Allowed** | URL is the bare host instead of `…/mcp` |
 | Browser doesn't open after **Authenticate** | Toggle the server off/on in Cursor's MCP settings, or restart Cursor |
-| Handoff page shown but Cursor doesn't connect | Cursor closed or not listening for the callback; click **Authenticate** again |
+| Browser doesn't return to Cursor / Cursor doesn't connect | Cursor closed or not listening for the callback; click **Authenticate** again |
+| Worked, then auth or tools fail / back to *Needs authentication* | Session revoked (single-session login elsewhere) or refresh failed; complete the browser sign-in again |
+| Connected but empty tools | Wrong environment URL for the credentials used; or toggle the server off/on |
 | Login page errors on redirect | Client redirect URI not registered on the OAuth server for that environment |
 | Tool calls **polygon/snapshot** for “quote AAPL” | Ask explicitly for **`level1`**, or use updated tool descriptions (prefer `level1` for generic quotes) |
 | Entitlement signing page loops | Signing not saved on the MDAS side; check with the frontend / auth team |
